@@ -121,6 +121,10 @@ def command_listener(simulator):
             if cmd_type == "SET_RPM":
                 simulator.pump_rpm = float(cmd_val)
                 simulator.set_scenario("RECOVERY") # Trigger recovery
+            elif cmd_type == "SET_STEAM_RATE":
+                simulator.steam_pressure = float(cmd_val)
+                simulator.steam_temp = 250.0 # Heat the well
+                simulator.set_scenario("RECOVERY") # Trigger recovery
     finally:
         consumer.close()
 
