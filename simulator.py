@@ -74,6 +74,11 @@ class WellPhysicsSimulator:
             self.rod_load_lbs = max(10000.0, self.rod_load_lbs - 500.0)
             if self.temperature_c >= 140.0:
                 self.set_scenario("NORMAL")
+                
+        elif self.scenario == "EMERGENCY_STOP":
+            self.pump_rpm = 0.0
+            self.rod_load_lbs = max(0.0, self.rod_load_lbs - 2000.0)
+            self.production_rate = 0.0
 
     def get_telemetry_payload(self, well_id):
         return {
@@ -125,6 +130,10 @@ def command_listener(simulator):
                 simulator.steam_pressure = float(cmd_val)
                 simulator.steam_temp = 250.0 # Heat the well
                 simulator.set_scenario("RECOVERY") # Trigger recovery
+            elif cmd_type == "STOP_PUMP":
+                simulator.pump_rpm = 0.0
+                simulator.production_rate = 0.0
+                simulator.set_scenario("EMERGENCY_STOP")
     finally:
         consumer.close()
 
