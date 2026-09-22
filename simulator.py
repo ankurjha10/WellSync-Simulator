@@ -27,6 +27,7 @@ class WellPhysicsSimulator:
         self.temperature_c = 145.0
         self.pressure_psi = 850.0
         self.viscosity_cp = 150.0
+        self.base_pump_rpm = 6.0
         self.pump_rpm = 6.0
         self.stroke_length = 72.0
         self.rod_load_lbs = 11000.0
@@ -48,7 +49,7 @@ class WellPhysicsSimulator:
             self.temperature_c = 145.0 + (wave * 0.5)
             self.viscosity_cp = 150.0 + (noise * 5)
             self.rod_load_lbs = 11000.0 + (wave * 50)
-            self.pump_rpm = 6.0 + (noise * 0.1)
+            self.pump_rpm = self.base_pump_rpm + (noise * 0.1)
         elif self.scenario == "COOLING":
             self.temperature_c = max(40.0, self.temperature_c - 0.5) 
             self.viscosity_cp = min(1200.0, self.viscosity_cp + 25.0) 
@@ -60,7 +61,11 @@ class WellPhysicsSimulator:
             self.rod_load_lbs = 16500.0 + (wave * 300)
             self.pump_rpm = 12.0
         elif self.scenario == "RECOVERY":
-            self.pump_rpm = max(5.0, self.pump_rpm - 1.0)
+            if self.pump_rpm > self.base_pump_rpm:
+                self.pump_rpm = max(self.base_pump_rpm, self.pump_rpm - 1.0)
+            elif self.pump_rpm < self.base_pump_rpm:
+                self.pump_rpm = min(self.base_pump_rpm, self.pump_rpm + 1.0)
+                
             self.temperature_c = min(150.0, self.temperature_c + 2.0)
             self.viscosity_cp = max(150.0, self.viscosity_cp - 50.0)
             self.rod_load_lbs = max(10000.0, self.rod_load_lbs - 500.0)
@@ -86,7 +91,7 @@ class WellPhysicsSimulator:
             "pumpEfficiencyPercent": round(max(30.0, 90.0 - (self.viscosity_cp / 50.0)), 2),
             "steamPressurePsi": round(self.steam_pressure, 2),
             "steamTemperatureC": round(self.steam_temp, 2),
-            "productionRateBopd": round(self.production_rate * (self.pump_rpm/6.0), 2)
+            "productionRateBopd": round(self.production_rate * (self.pump_rpm/6.0) if self.pump_rpm > 0 else 0, 2)
         }
 
 def command_listener(simulator):
@@ -113,16 +118,22 @@ def command_listener(simulator):
             print("="*60 + "\n")
             
             if cmd_type == "SET_RPM":
-                simulator.pump_rpm = float(cmd_val)
-                simulator.set_scenario("RECOVERY")
+                simulator.base_pump_rpm = float(cmd_val)
+                if simulator.scenario != "NORMAL":
+                    simulator.set_scenario("RECOVERY")
             elif cmd_type == "SET_STEAM_RATE":
                 simulator.steam_pressure = float(cmd_val)
                 simulator.steam_temp = 250.0
-                simulator.set_scenario("RECOVERY")
+                if simulator.scenario != "NORMAL":
+                    simulator.set_scenario("RECOVERY")
             elif cmd_type == "STOP_PUMP":
                 simulator.pump_rpm = 0.0
                 simulator.production_rate = 0.0
                 simulator.set_scenario("EMERGENCY_STOP")
+            elif cmd_type == "START_PUMP":
+                simulator.base_pump_rpm = float(cmd_val) if cmd_val else 6.0
+                simulator.production_rate = 35.0
+                simulator.set_scenario("NORMAL")
     finally:
         consumer.close()
 
@@ -148,13 +159,14 @@ if __name__ == "__main__":
             payload = simulator.get_telemetry_payload(well_id)
             
             color = "\033[92m" if simulator.scenario in ["NORMAL", "RECOVERY"] else "\033[91m"
-            print(f"\033[94m[{payload['timestamp']}]\033[0m Tick={simulator.tick:04d} | {color}{simulator.scenario:8s}\033[0m | RPM=\033[93m{payload['pumpRpm']}\033[0m | Load={payload['rodLoadLbs']} lbs")
+            print(f"\033[94m[{payload['timestamp']}]\033[0m Tick={simulator.tick:04d} | {color}{simulator.scenario:8s}\033[0m | RPM=\033[93m{payload['pumpRpm']:>5.2f}\033[0m | Load={payload['rodLoadLbs']:>8.2f} lbs")
             
             producer.produce("telemetry.raw", key=well_id, value=json.dumps(payload))
             producer.poll(0)
                 
-            if simulator.tick == 15: simulator.set_scenario("COOLING")
-            elif simulator.tick == 35: simulator.set_scenario("CRITICAL")
+            if simulator.scenario != "EMERGENCY_STOP":
+                if simulator.tick == 15: simulator.set_scenario("COOLING")
+                elif simulator.tick == 35: simulator.set_scenario("CRITICAL")
                 
             time.sleep(2)
             
